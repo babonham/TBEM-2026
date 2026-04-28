@@ -1,0 +1,635 @@
+---
+title: "TBEM 2026"
+format: html
+editor: visual
+---
+
+Load packages and data sets
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(fishualize)
+library(patchwork)
+library(sf)
+library(gstat)
+library(maps)
+library(vegan)
+
+setwd("C:/Users/Owner/OneDrive/Documents/R Coding/DECORATE/TBEM 2026")
+
+biobox<- read_csv(file = "data/2025 Bioboxes.csv", col_names = TRUE)
+view(biobox)
+oysters<- read_csv(file = "data/2025 Oyster Data.csv", col_names = TRUE)
+view(oysters)
+hydro<- read_csv(file = "data/2025 Hydro.csv", col_names = TRUE)
+view(hydro)
+hydro_maps<- read_csv(file = "data/2025 hydro maps.csv", col_names = TRUE)
+view(hydro_maps)
+```
+
+Data Wrangling
+
+```{r}
+biobox.summary <- biobox %>%
+  drop_na(total_length_mm, stand_length_mm, weight_g) %>%
+  filter(species_type == "fish") %>%
+  group_by( site, species_type, biobox_ID) %>%
+  summarize(n = sum(number_individuals), biomass = sum(weight_g), size = mean(total_length_mm)) %>%
+  ungroup()
+
+oysters.dredge <- oysters %>%
+  filter(extraction_type == "Dredge",
+         oyster_mortality == "live") %>%
+  group_by(site) %>%
+  summarize(mean_live = mean(oyster_total_count, na.rm = TRUE))
+
+
+hydro.sum <- hydro %>%
+  group_by(site) %>%
+  summarize(temp = mean(water_temp_C),
+            do = mean(DO_mgL),
+            sal = mean(sal_ppt))
+
+```
+
+Species Richness
+
+```{r}
+richness <- biobox %>%
+  group_by(site) %>%
+  summarise(richness = n_distinct(species))
+
+richness.hydro <- richness %>%
+  inner_join(hydro.sum)
+
+richness.counts<- richness %>%
+  inner_join(oysters.dredge)
+
+richness.plot<- 
+  ggplot(richness.hydro, aes(x = site, y = richness, color = site)) +
+  geom_segment(aes(x = site, xend = site, y = 0, yend = richness),
+               color = "gray70") +
+  geom_point(size = 4) +
+  theme_minimal() +
+  labs(
+    x = "Site",
+    y = "Species Richness"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+ggsave(richness.plot, file = "plots/richnessplot.png", width = 10.5, height =6)
+richness.sal.plot<- ggplot(richness.hydro, aes(x = sal, y = richness)) +
+  geom_point(size = 3, color = "#CE7DA5") +
+  geom_smooth(method = "lm", se = TRUE, color = "#CE7DA5", fill = "#CE7DA5") +
+  theme_minimal() +
+  labs(
+    x = "Mean Salinity",
+    y = "Species Richness"
+  ) 
+
+richness.temp.plot<- ggplot(richness.hydro, aes(x = temp, y = richness)) +
+  geom_point(size = 3, color = "#CE7DA5") +
+  geom_smooth(method = "lm", se = TRUE, color = "#CE7DA5", fill = "#CE7DA5") +
+  theme_minimal() +
+  labs(
+    x = "Mean Temperature",
+    y = "Species Richness"
+  )
+richness.counts.plot<- ggplot(richness.counts, aes(x = mean_live, y = richness)) +
+  geom_point(size = 3, color = "#CE7DA5") +
+  geom_smooth(method = "lm", se = TRUE, color = "#CE7DA5", fill = "#CE7DA5") +
+  theme_minimal() +
+  labs(
+    x = "Mean live oyster count",
+    y = "Species Richness"
+  )
+richness.hydro.count.plots<- richness.sal.plot+richness.temp.plot+richness.counts.plot
+ggsave(richness.hydro.count.plots, file = "plots/richness.hydro.count.plots.png", width = 10.5, height = 6)
+```
+
+Species Diversity
+
+```{r}
+diversity <- biobox %>%
+  group_by(site) %>%
+  summarise(diversity = diversity(number_individuals, index = "shannon"))
+
+diversity.hydro <- diversity %>%
+  inner_join(hydro.sum)
+
+diversity.counts<- diversity %>%
+  inner_join(oysters.dredge)
+
+diversity.sal.plot<- ggplot(diversity.hydro, aes(x = sal, y = diversity)) +
+  geom_point(size = 3, color = "#F1BF98") +
+  geom_smooth(method = "lm", se = TRUE, color = "#F1BF98", fill = "#F1BF98") +
+  theme_minimal() +
+  labs(
+    x = "Mean Salinity",
+    y = "Shannon-Wiener Diversity Index"
+  ) 
+
+diversity.temp.plot<- ggplot(diversity.hydro, aes(x = temp, y = diversity)) +
+  geom_point(size = 3, color = "#F1BF98") +
+  geom_smooth(method = "lm", se = TRUE, color = "#F1BF98", fill = "#F1BF98") +
+  theme_minimal() +
+  labs(
+    x = "Mean Temperature",
+    y = "Shannon-Wiener Diversity Index"
+  )
+diversity.counts.plot<- ggplot(diversity.counts, aes(x = mean_live, y = diversity)) +
+  geom_point(size = 3, color = "#F1BF98") +
+  geom_smooth(method = "lm", se = TRUE, color = "#F1BF98", fill = "#F1BF98") +
+  theme_minimal() +
+  labs(
+    x = "Mean live oyster count",
+    y = "Shannon-Wiener Diversity Index"
+  )
+diversity.hydro.count.plots<- diversity.sal.plot+diversity.temp.plot+diversity.counts.plot
+ggsave(diversity.hydro.count.plots, file = "plots/diversity.hydro.count.plots.png", width = 10.5, height = 6)
+
+```
+
+Fish Community Metrics
+
+```{r}
+biobox.dredge <- 
+  left_join(biobox.summary, oysters.dredge, by = "site")
+view(biobox.dredge)
+biobox.hydro <- 
+  left_join(biobox.summary, hydro.sum, by = "site")
+
+#statistics - linear models, log transformed
+mod_abu <- lm(log(n + 1) ~ mean_live, data = biobox.dredge)
+summary(mod_abu) #not significant
+
+mod_biomass <- lm(log(biomass + 1) ~ mean_live, data = biobox.dredge)
+summary(mod_biomass) #not significant
+
+
+mod_size <- lm(size ~ mean_live, data = biobox.dredge)
+summary(mod_size) #not significant
+
+
+biobox.dredge.plot.abu <- ggplot(data = biobox.dredge, aes(x = mean_live, 
+                                                           y = log(n+1))) +
+  geom_point(color = "#5EB1BF") +
+  geom_smooth(method = "lm", color = "#5EB1BF", fill = "#5EB1BF") +
+  theme_classic() +
+  xlab("Mean live oyster count") +
+  ylab("Log(Mean fish abundance + 1)") +
+  theme_light()
+
+biobox.dredge.plot.biomass <- ggplot(data = biobox.dredge, 
+  aes(x = mean_live, y = log(biomass +1))) +
+  geom_point(color = "#5EB1BF") +
+  geom_smooth(method = "lm", color = "#5EB1BF", fill = "#5EB1BF") +
+  theme_classic() +
+  xlab("Mean live oyster count") +
+  ylab("Log(Mean fish biomass (g) + 1)") +
+  theme_light()
+
+biobox.dredge.plot.size <- ggplot(data = biobox.dredge, aes(x = mean_live, 
+                                                            y = log(size +1))) +
+  geom_point(color = "#5EB1BF") +
+  geom_smooth(method = "lm", color = "#5EB1BF", fill = "#5EB1BF") +
+  theme_classic() +
+  xlab("Mean live oyster count") +
+  ylab("Log(Mean fish size (mm) + 1)") +
+  theme_light()
+
+
+biobox.dredge.plots <- biobox.dredge.plot.abu + biobox.dredge.plot.biomass + biobox.dredge.plot.size
+ggsave(biobox.dredge.plots, file = "plots/biobox.dredge.plots.png", width = 10.5, height = 6)
+```
+
+Invertebrate Metrics
+
+```{r}
+biobox.summary2 <- biobox %>%
+  drop_na(species_type) %>%
+  filter(species_type == "invertebrate") %>%
+  group_by(bay, site, species_type, biobox_ID) %>%
+  summarize(n = sum(number_individuals), biomass = sum(weight_g), size = mean(total_length_mm)) %>%
+  ungroup()
+
+biobox.dredge2 <- biobox.summary2 %>%
+  inner_join(oysters.dredge) 
+
+biobox.hydro2 <- biobox.summary2 %>%
+  inner_join(hydro.sum)
+
+#statistics - linear models, log transformed
+mod_abu2 <- lm(log(n + 1) ~ mean_live, data = biobox.dredge2)
+summary(mod_abu2) #significant
+
+mod_biomass2 <- lm(log(biomass + 1) ~ mean_live, data = biobox.dredge2)
+summary(mod_biomass2) #not significant
+
+
+biobox.dredge.plot.abu2 <- ggplot(data = biobox.dredge2, aes(x = mean_live,
+                                                             y = log(n+1))) +
+  geom_point(color = "#7FB069") +
+  geom_smooth(method = "lm", color = "#7FB069", fill = "#7FB069") +
+  theme_classic() +
+  xlab("Mean live oyster count") +
+  ylab("Log(Mean invertebrate abundance + 1)") +
+  theme_light()
+
+biobox.dredge.plot.biomass2 <- ggplot(data = biobox.dredge2, aes(x = mean_live, 
+                                                                 y = log(biomass + 1))) +
+  geom_point(color = "#7FB069") +
+  geom_smooth(method = "lm", color = "#7FB069", fill = "#7FB069") +
+  theme_classic() +
+  xlab("Mean live oyster count") +
+  ylab("Log(Mean invertebrate biomass (g) + 1)") +
+  theme_light()
+
+
+biobox.dredge.plots2 <- biobox.dredge.plot.abu2 + biobox.dredge.plot.biomass2 
+
+ggsave(biobox.dredge.plots2, file = "plots/biobox.dredge.plots2.png", width = 10.5, height = 6)
+```
+
+Salinity Map
+
+```{r}
+hydro.map.sum<- hydro_maps %>%
+  group_by(site, bay, lat, lon) %>%
+  filter(depth_recording == "bottom") %>%
+  summarise(mean.temp = mean(water_temp_C),
+            mean.sal = mean(sal_ppt))
+oyster.hydro.map <- oysters.dredge %>%
+  inner_join(hydro.map.sum)
+
+# Convert the joined data frame into a spatial (sf) object
+hydro.maps.spatial <- st_as_sf(
+  oyster.hydro.map,
+  coords = c("lon", "lat"), # Specify longitude and latitude columns to create point geometry
+  crs = 4326  # Set coordinate reference system to WGS84 (standard lat/lon)
+)
+
+library(osmdata)
+
+# Padding added around the data extent to avoid points touching map edges
+lon_pad <- 0.2
+lat_pad <- 0.25
+
+
+# Define a bounding box based on sampling locations
+# Expanded slightly using padding values
+bbox <- c(
+  xmin = min(hydro.map.sum$lon) - lon_pad,
+  ymin = min(hydro.map.sum$lat) - lat_pad,
+  xmax = max(hydro.map.sum$lon) + lon_pad,
+  ymax = max(hydro.map.sum$lat) + lat_pad
+)
+
+
+# Download coastline line features from OpenStreetMap
+#osm_coast <- opq(bbox = bbox) |>
+  #add_osm_feature(key = "natural", value = "coastline") |>
+  #osmdata_sf()
+
+
+# Extract line geometries representing coastlines
+# Ensure CRS matches the oyster point data
+#coast_sf <- osm_coast$osm_lines |>
+  #st_transform(4326)
+
+#salinity.count.map <- ggplot() +
+ # geom_sf(
+  #  data = coast_sf,
+   # color = "grey50",
+    #linewidth = 0.3
+  #) +
+  #geom_sf(
+   # data = hydro.maps.spatial,
+    #aes(color = mean.sal, size = mean_live),
+    #alpha = 0.9
+  #) +
+  #scale_color_viridis_c(name = "Mean Salinity (PSU)") +
+  #scale_size_continuous(
+   # name = "Live Oyster Count",
+    #range = c(2, 6)
+  #) +
+  #coord_sf(
+   # xlim = c(bbox["xmin"], bbox["xmax"]),
+    #ylim = c(bbox["ymin"], bbox["ymax"]),
+    #expand = FALSE
+  #) +
+  #theme_minimal() +
+  #theme(panel.grid = element_blank()) +
+  #labs(
+   # title = "Mean Salinity and Live Oyster Abundance Across Texas Bays",
+    #x = "Longitude",
+    #y = "Latitude"
+  #)
+
+#salinity.count.map
+
+#ggsave(salinity.count.map, file = "plots/salinity.count.map.png", width = 10.5, height = 6)
+
+```
+
+Mapview - Salinity Map and Temperature
+
+```{r}
+library(mapview)
+
+hydro.maps.spatial <- st_as_sf(
+  oyster.hydro.map,
+  coords = c("lon", "lat"),
+  crs = 4326  # WGS84
+)
+
+mapview(
+  hydro.maps.spatial,
+  xcol = "Oyster Sites",  ycol = "Mean Salinity",
+  col.regions = viridisLite::viridis(100),
+  alpha.regions = 0.9,
+  legend = TRUE)
+
+
+hydro.maps.spatial$size_scaled <- scales::rescale(
+  hydro.maps.spatial$mean_live,
+  to = c(2, 8)
+)
+
+salinity.m <- mapview(
+  hydro.maps.spatial,
+  zcol = "mean.sal",
+  cex  = hydro.maps.spatial$size_scaled,
+  col.regions = viridisLite::plasma(100),
+  alpha.regions = 0.9,
+  legend = TRUE
+)
+salinity.m
+
+temp.m <- mapview(
+  hydro.maps.spatial,
+  zcol = "mean.temp",
+  cex  = hydro.maps.spatial$size_scaled,
+  col.regions = viridisLite::plasma(100),
+  alpha.regions = 0.9,
+  legend = TRUE
+)
+temp.m
+```
+
+Temperature Map
+
+```{r}
+#temp.count.map <- ggplot() +
+ # geom_sf(
+  #  data = coast_sf,
+   # color = "grey50",
+    #linewidth = 0.3
+  #) +
+  #geom_sf(
+   # data = hydro.maps.spatial,
+    #aes(color = mean.temp, size = mean_live),
+    #alpha = 0.9
+  #) +
+  #scale_color_viridis_c(name = "Mean Temperature (Celcius)", option = "plasma") +
+  #scale_size_continuous(
+   # name = "Live Oyster Count",
+    #range = c(2, 6)
+  #) +
+  #coord_sf(
+  #  xlim = c(bbox["xmin"], bbox["xmax"]),
+  #  ylim = c(bbox["ymin"], bbox["ymax"]),
+   # expand = FALSE
+  #) +
+  #theme_minimal() +
+ # theme(panel.grid = element_blank()) +
+#  labs(
+    #title = "Mean Temperature and Live Oyster Abundance Across Texas Bays",
+    #x = "Longitude",
+   # y = "Latitude"
+  #)
+
+#temp.count.map
+#ggsave(temp.count.map, file = "plots/temp.count.map.png", width = 10.5, height = 6)
+```
+
+RDA - Relative Abundance by Oyster Density
+
+```{r}
+library(ggrepel) 
+
+comm_raw <- biobox %>%
+  group_by(bay, site, species) %>%
+  summarise(abundance = sum(number_individuals), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species,
+    values_from = abundance,
+    values_fill = 0
+  )
+ 
+# Save site identifiers for later reattachment
+site_ids <- comm_raw %>%
+  select(bay, site)
+
+# Remove non-numeric columns so matrix contains ONLY species data
+comm_mat <- comm_raw %>%
+  select(-bay, -site)
+
+# Hellinger transform data:
+# - Converts counts to relative abundances
+# - Square-rooted to reduce dominance of abundant taxa
+# - Makes data suitable for Euclidean-based methods like RDA
+comm_hel <- decostand(comm_mat, method = "hellinger")
+
+
+env <- hydro %>%
+  group_by(bay, site) %>%
+  summarise(
+    temp = mean(water_temp_C, na.rm = TRUE),
+    salinity = mean(sal_ppt, na.rm = TRUE),
+    DO = mean(DO_mgL, na.rm = TRUE),
+    pH = mean(pH, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+oysters_site <- oysters %>%
+  filter(extraction_type == "Dredge", oyster_mortality == "live") %>%
+  group_by(bay, site) %>%
+  summarise(
+    oyster_total = sum(oyster_total_count, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#join datasets
+env_full <- site_ids %>%
+  left_join(oysters_site, by = c("bay", "site")) %>%
+  left_join(env, by = c("bay", "site"))
+
+# Constrained ordination:
+# Species composition ~ environmental gradients
+rda_mod <- rda(
+  comm_hel ~ salinity + temp + DO + pH + oyster_total,
+  data = env_full
+)
+
+# Displays:
+# - Eigenvalues (variance explained)
+# - Species–environment correlations
+summary(rda_mod)
+
+# Site scores:
+# - Positions of each site in constrained ordination space
+site_scores <- scores(rda_mod, display = "sites", scaling = 2)
+
+
+# Environmental (biplot) scores:
+# - These are the "loadings" of environmental variables
+# - Arrow length = strength of correlation with ordination axes
+env_scores  <- scores(rda_mod, display = "bp", scaling = 2)
+
+
+# Species scores:
+# - Location of species optima along gradients
+species_scores <- scores(rda_mod, display = "species", scaling = 2)
+
+
+plot_df <- data.frame(
+  site_scores,
+  oyster_density = factor(
+    cut(
+      env_full$oyster_total,
+      breaks = c(-Inf, 50, Inf),
+      labels = c("Low", "High")
+    ),
+    levels = c("Low", "High")
+  )
+)
+
+
+# Identify species with strong contributions to RDA1–RDA2
+# (distance from origin in ordination space)
+species_strength <- rowSums(species_scores[,1:2]^2)
+
+# Keep top 25% most influential species
+top_species <- species_scores[species_strength > quantile(species_strength, 0.75), ]
+
+# Prepare environmental vectors dataframe
+env_df <- as.data.frame(env_scores)
+env_df$var <- rownames(env_df)
+
+RDA.plot<- ggplot(plot_df, aes(RDA1, RDA2, color = oyster_density)) +
+
+  # Sites
+  geom_point(size = 3.5, alpha = 0.9) +
+
+  # Environmental vectors
+  geom_segment(
+    data = env_df,
+    aes(x = 0, y = 0,
+        xend = RDA1,
+        yend = RDA2),
+    inherit.aes = FALSE,
+    arrow = arrow(length = unit(0.3, "cm")),
+    linewidth = 0.8,
+    color = "black"
+  ) +
+
+  # Vector labels – pushed to arrow tips and repelled
+  geom_text_repel(
+    data = env_df,
+    aes(x = RDA1 * 1.25, y = RDA2 * 1.25, label = var),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 4,
+    color = "black",
+    segment.color = NA
+  ) +
+
+  # Species (still subtle)
+  geom_text(
+    data = as.data.frame(top_species),
+    aes(RDA1, RDA2, label = rownames(top_species)),
+    inherit.aes = FALSE,
+    size = 2.7,
+    color = "grey40",
+    alpha = 0.7
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "Low" = "#99c1de",
+      "High" = "#386fa4"
+    )
+  ) +
+
+  labs(
+    x = "RDA1",
+    y = "RDA2",
+    color = "Live oyster counts"
+  ) +
+
+  coord_equal() +
+  theme_classic(base_size = 15)
+RDA.plot
+ggsave(RDA.plot, file = "plots/RDA.plot.png", width = 10.5, height = 6)
+```
+
+```{r}
+
+plot_df <- data.frame(
+  site_scores,
+  salinity = env_full$salinity
+)
+
+
+RDA.plot2<- ggplot(plot_df, aes(RDA1, RDA2, color = salinity)) +
+
+  # Sites
+  geom_point(size = 3.5, alpha = 0.9) +
+
+  # Environmental vectors
+  geom_segment(
+    data = env_df,
+    aes(x = 0, y = 0,
+        xend = RDA1,
+        yend = RDA2),
+    inherit.aes = FALSE,
+    arrow = arrow(length = unit(0.3, "cm")),
+    linewidth = 0.8,
+    color = "black"
+  ) +
+
+  # Vector labels – pushed to arrow tips and repelled
+  geom_text_repel(
+    data = env_df,
+    aes(x = RDA1 * 1.25, y = RDA2 * 1.25, label = var),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 4,
+    color = "black",
+    segment.color = NA
+  ) +
+
+  # Species (still subtle)
+  geom_text(
+    data = as.data.frame(top_species),
+    aes(RDA1, RDA2, label = rownames(top_species)),
+    inherit.aes = FALSE,
+    size = 2.7,
+    color = "grey40",
+    alpha = 0.7
+  ) +
+
+  labs(
+    x = "RDA1",
+    y = "RDA2",
+    color = "Salinity"
+  ) +
+
+  coord_equal() +
+  theme_classic(base_size = 15)
+RDA.plot2
+
+```
